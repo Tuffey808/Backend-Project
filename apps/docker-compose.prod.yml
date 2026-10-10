@@ -1,0 +1,82 @@
+# Production stack — API + Portal + PostgreSQL
+#
+# Quick start:
+#   cd apps
+#   cp .env.production.example .env.production   # edit secrets + URLs
+#   ./scripts/deploy-prod.sh
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gmall
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: gmall_portal
+    volumes:
+      - gmall_portal_pg:/var/lib/postgresql/data
+    ports:
+      - '127.0.0.1:5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gmall -d gmall_portal']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://gmall:${POSTGRES_PASSWORD}@db:5432/gmall_portal?schema=public
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      PORT: 3001
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://portal.gmall.sa}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?Set PUBLIC_API_URL}
+      API_PUBLIC_URL: ${PUBLIC_API_URL}
+      TAP_USE_SANDBOX: ${TAP_USE_SANDBOX:-true}
+      TAP_SANDBOX_SECRET_KEY: ${TAP_SANDBOX_SECRET_KEY:-}
+      TAP_PRODUCTION_SECRET_KEY: ${TAP_PRODUCTION_SECRET_KEY:-}
+      TAP_MERCHANT_ID: ${TAP_MERCHANT_ID:-}
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY:-}
+      SEED_DB: ${SEED_DB:-false}
+    volumes:
+      - gmall_uploads:/app/uploads
+    ports:
+      - '127.0.0.1:3001:3001'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  portal:
+    build:
+      context: ./portal
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    ports:
+      - '127.0.0.1:3002:3002'
+
+volumes:
+  gmall_portal_pg:
+  gmall_uploads:
